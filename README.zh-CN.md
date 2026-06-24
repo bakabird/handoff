@@ -36,7 +36,7 @@
 | --- | --- |
 | Claude Sonnet | 1×（基准） |
 | DeepSeek 官方 API | **1/3** |
-| [OpenCode Go](https://opencode.ai/go?ref=D5926WCTD8)（含 DeepSeek V4） | **1/18** |
+| [OpenCode Go](https://opencode.ai/go?ref=JC54498ZNF)（含 DeepSeek V4） | **1/18** |
 
 旗舰模型负责沟通、拆解、验收；执行全部 handoff 出去——**$20 的订阅指挥 $5 的算力，干出 ~$200 的活**。这就是 handoff 的全部用法：在你的 agent 会话里说一句话。
 
@@ -54,7 +54,7 @@ uv tool upgrade handoff-cli   # 更新到最新版
 
 opus / codex 走你本机的 claude / codex 登录态，零配置；**只有 DeepSeek 需要填一个 token**。
 
-DeepSeek 算力推荐走 [OpenCode Go 套餐](https://opencode.ai/go?ref=D5926WCTD8)（单价最低，含 DeepSeek V4）。拿到 key 后，编辑 `~/.handoff/config.yaml`，只改 `ANTHROPIC_AUTH_TOKEN` 这一行：
+DeepSeek 算力推荐走 [OpenCode Go 套餐](https://opencode.ai/go?ref=JC54498ZNF)（单价最低，含 DeepSeek V4）。拿到 key 后，编辑 `~/.handoff/config.yaml`，只改 `ANTHROPIC_AUTH_TOKEN` 这一行：
 
 > ⚠️ **OpenCode Go 用户**：需要先搭一个本地代理才能配合 Claude Code 使用。详见 **[routatic/proxy](https://github.com/routatic/proxy)**。
 

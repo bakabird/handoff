@@ -27,13 +27,13 @@ If you use more than one coding agent, these will sound familiar:
   — Just say: *"Resume the last `/handoff-ds` session, then do X."* It just sends one more message in the old conversation — all the old context is still there.
 
 
-**The math is simple:** DeepSeek V4 is as capable as Sonnet, and on [OpenCode Go](https://opencode.ai/go?ref=D5926WCTD8) the same money buys **18× the work**:
+**The math is simple:** DeepSeek V4 is as capable as Sonnet, and on [OpenCode Go](https://opencode.ai/go?ref=JC54498ZNF) the same money buys **18× the work**:
 
 | Option | Relative cost for the same work |
 | --- | --- |
 | Claude Sonnet (subscription) | 1× (baseline) |
 | DeepSeek official API | **1/3** |
-| [OpenCode Go](https://opencode.ai/go?ref=D5926WCTD8) (includes DeepSeek V4) | **1/18** |
+| [OpenCode Go](https://opencode.ai/go?ref=JC54498ZNF) (includes DeepSeek V4) | **1/18** |
 
 So: **only pay for the SOTA model** (Opus / GPT-5.5) — use it to plan and review. Everything else goes to DeepSeek. With handoff, **$20 Claude Code (plan + dispatch) + $5 OpenCode Go (execution) ≈ the work of a $200 Claude Code Max.**
 
@@ -53,7 +53,7 @@ uv tool upgrade handoff-cli   # update to the latest version
 
 The `opus` and `codex` backends reuse your existing Claude Code / Codex logins — zero config. **Only DeepSeek needs a token.**
 
-For DeepSeek, we recommend the [OpenCode Go plan](https://opencode.ai/go?ref=D5926WCTD8) (lowest cost, includes DeepSeek V4). Once you have a key, edit `~/.handoff/config.yaml` and change just the `ANTHROPIC_AUTH_TOKEN` line:
+For DeepSeek, we recommend the [OpenCode Go plan](https://opencode.ai/go?ref=JC54498ZNF) (lowest cost, includes DeepSeek V4). Once you have a key, edit `~/.handoff/config.yaml` and change just the `ANTHROPIC_AUTH_TOKEN` line:
 
 > ⚠️ **OpenCode Go users**: you need a local proxy to use OpenCode Go with Claude Code. See **[routatic/proxy](https://github.com/routatic/proxy)**.
 
