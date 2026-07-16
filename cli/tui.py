@@ -20,6 +20,7 @@ from .runtime_info import (
     format_usage_detail_value,
     format_usage_value,
     kill_process_group,
+    normalize_usage,
     parse_runtime_info,
     runtime_pid,
     scan_jsonl_usage,
@@ -27,6 +28,19 @@ from .runtime_info import (
 
 # Seconds between DB polls for auto-refresh.
 POLL_INTERVAL = 5.0
+RUN_COLUMN_WIDTH = 34
+RUN_COLUMN_MIN_WIDTH = 19
+DATE_COLUMN_WIDTH = 11
+DATE_COLUMN_MIN_WIDTH = 5
+STATUS_COLUMN_WIDTH = 7
+CWD_COLUMN_WIDTH = 10
+CWD_COLUMN_MIN_WIDTH = 6
+FULL_CWD_COLUMN_WIDTH = 28
+FULL_CWD_COLUMN_MIN_WIDTH = 8
+INFO_COLUMN_WIDTH = 14
+INFO_COLUMN_MIN_WIDTH = 8
+PROMPT_COLUMN_MIN_WIDTH = 20
+TABLE_WIDTH_SLACK = 18
 
 
 class KillRunError(Exception):
@@ -248,6 +262,7 @@ class RunListScreen(Screen):
         self._fingerprint: str = ""               # change-detection fingerprint
         self._dirty: bool = False                 # data changed while detail view was active
         self._pending_cursor_run_id: str | None = None  # cursor-restore target
+        self._active_column_widths: dict[str, int] = {}
         super().__init__(name=name, id=id, classes=classes)
 
     @property
@@ -260,6 +275,19 @@ class RunListScreen(Screen):
         yield Static(f" handoff runs  ·  {count} recent {run_label}", id="title_bar")
         yield DataTable(id="run_table", cursor_type="row")
         yield Static("", id="run_footer")
+
+    def on_resize(self, event=None) -> None:
+        """Recompute responsive table columns when the terminal changes size."""
+        try:
+            table = self.query_one("#run_table", DataTable)
+        except Exception:
+            return
+        if table.row_count == 0 and not self._rows:
+            return
+        if self._column_widths() == self._active_column_widths:
+            return
+        self._save_cursor_run_id()
+        self._rebuild_table(rebuild_columns=True)
 
     def on_mount(self) -> None:
         table = self.query_one("#run_table", DataTable)
@@ -428,40 +456,155 @@ class RunListScreen(Screen):
         except OSError:
             return 120
 
+    def _column_widths(self) -> dict[str, int]:
+        cwd_width = FULL_CWD_COLUMN_WIDTH if self._full_cwd else CWD_COLUMN_WIDTH
+        cwd_min = FULL_CWD_COLUMN_MIN_WIDTH if self._full_cwd else CWD_COLUMN_MIN_WIDTH
+        widths = {
+            "run": RUN_COLUMN_WIDTH,
+            "date": DATE_COLUMN_WIDTH,
+            "status": STATUS_COLUMN_WIDTH,
+            "cwd": cwd_width,
+            "info": INFO_COLUMN_WIDTH,
+        }
+        mins = {
+            "date": DATE_COLUMN_MIN_WIDTH,
+            "cwd": cwd_min,
+            "info": INFO_COLUMN_MIN_WIDTH,
+            "run": RUN_COLUMN_MIN_WIDTH,
+        }
+
+        available = max(40, self._terminal_width() - TABLE_WIDTH_SLACK)
+        fixed = sum(widths.values())
+        prompt_width = available - fixed
+        if prompt_width < PROMPT_COLUMN_MIN_WIDTH:
+            needed = PROMPT_COLUMN_MIN_WIDTH - prompt_width
+            for key in ("date", "cwd", "info", "run"):
+                reducible = max(0, widths[key] - mins[key])
+                take = min(reducible, needed)
+                widths[key] -= take
+                needed -= take
+                if needed <= 0:
+                    break
+
+        widths["prompt"] = max(8, available - sum(widths.values()))
+        return widths
+
     def _prompt_width(self) -> int:
-        cwd_width = 28 if self._full_cwd else 18
-        fixed = 34 + 11 + 11 + cwd_width + 18
-        return max(40, self._terminal_width() - fixed)
+        return self._column_widths()["prompt"]
 
     def _add_columns(self, table: DataTable) -> None:
-        cwd_width = 28 if self._full_cwd else 18
-        table.add_column("RUN", width=34, key="run")
-        table.add_column("DATE", width=11, key="date")
-        table.add_column("STATUS", width=11, key="status")
-        table.add_column("CWD", width=cwd_width, key="cwd")
-        table.add_column("PROMPT", width=self._prompt_width(), key="prompt")
+        widths = self._column_widths()
+        self._active_column_widths = widths
+        table.add_column("RUN", width=widths["run"], key="run")
+        table.add_column("DATE", width=widths["date"], key="date")
+        table.add_column("STATUS", width=widths["status"], key="status")
+        table.add_column("CWD", width=widths["cwd"], key="cwd")
+        table.add_column("INFO", width=widths["info"], key="info")
+        table.add_column("PROMPT", width=widths["prompt"], key="prompt")
 
     def _add_table_row(self, table: DataTable, row) -> None:
         fmt = format_run_row(row, self._full_cwd)
+        widths = self._active_column_widths or self._column_widths()
         table.add_row(
-            fmt["id"],
-            fmt["date"],
-            fmt.get("status", ""),
-            fmt["cwd"],
+            self._run_for_row(fmt["id"], row, widths["run"]),
+            self._date_for_row(fmt["date"], widths["date"]),
+            self._clip(fmt.get("status", ""), widths["status"]),
+            self._clip(fmt["cwd"], widths["cwd"]),
+            self._clip(self._info_for_row(row), widths["info"]),
             self._prompt_for_row(row),
             key=fmt["id"],
         )
+
+    @staticmethod
+    def _clip(value: str, width: int) -> str:
+        value = value or ""
+        if width <= 0 or len(value) <= width:
+            return value
+        if width <= 3:
+            return value[:width]
+        return value[: width - 3] + "..."
+
+    @staticmethod
+    def _clip_with_suffix(value: str, suffix: str, width: int) -> str:
+        value = value or ""
+        if not suffix:
+            return RunListScreen._clip(value, width)
+        full = value + suffix
+        if len(full) <= width:
+            return full
+        if width <= len(suffix):
+            return suffix[-width:]
+        body_width = width - len(suffix)
+        if body_width <= 3:
+            return value[:body_width] + suffix
+        return value[: body_width - 3] + "..." + suffix
+
+    @staticmethod
+    def _date_for_row(value: str, width: int) -> str:
+        if len(value or "") <= width:
+            return value or ""
+        if width <= 5 and " " in value:
+            return value.split(" ", 1)[0][:width]
+        return RunListScreen._clip(value, width)
+
+    @staticmethod
+    def _resume_index_for_row(row) -> int:
+        try:
+            return int(row_value(row, "resume_index", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _run_for_row(self, run_id: str, row, width: int) -> str:
+        suffix = "↩" if self._resume_index_for_row(row) > 0 else ""
+        return self._clip_with_suffix(run_id, suffix, width)
 
     @staticmethod
     def _row_is_pro(row) -> bool:
         info = parse_runtime_info(row_value(row, "runtime_info", ""))
         return bool(info.get("pro"))
 
+    @staticmethod
+    def _compact_count(value: int) -> str:
+        if value >= 1_000_000:
+            return f"{int(value / 1_000_000)}M"
+        if value >= 1_000:
+            tenths = int(value / 100_000)
+            return f"{tenths / 10:.1f}M"
+        return str(value)
+
+    @staticmethod
+    def _run_id_prefix(run_id: str) -> str:
+        parts = (run_id or "").split("-")
+        if len(parts) >= 3 and parts[0].isdigit():
+            return f"{parts[1]}-{parts[2]}"
+        if len(parts) >= 2:
+            return f"{parts[0]}-{parts[1]}"
+        return run_id or "?"
+
+    def _context_size_for_row(self, row) -> str:
+        info = parse_runtime_info(row_value(row, "runtime_info", ""))
+        usage = normalize_usage(info.get("usage") if isinstance(info.get("usage"), dict) else {})
+        input_tokens = int(usage.get("input_tokens") or 0)
+        return self._compact_count(input_tokens) if input_tokens else ""
+
+    def _info_for_row(self, row) -> str:
+        parts = []
+        context_size = self._context_size_for_row(row)
+        if context_size:
+            parts.append(context_size)
+        resume_index = self._resume_index_for_row(row)
+        first_run_id = row_value(row, "first_session_run_id", "") or ""
+        if resume_index > 0 and first_run_id:
+            parts.append(f"↩{self._run_id_prefix(first_run_id)}")
+        if self._row_is_pro(row):
+            parts.append("Pro")
+
+        return "|".join(parts)
+
     def _prompt_for_row(self, row) -> str:
-        width = self._prompt_width()
-        prefix = "[Pro] " if self._row_is_pro(row) else ""
-        body_width = max(1, width - len(prefix))
-        return prefix + prompt_prefix(row["prompt"], body_width)
+        widths = self._active_column_widths or self._column_widths()
+        width = widths["prompt"]
+        return prompt_prefix(row["prompt"], width)
 
     def _usage_for_row(self, row) -> dict:
         if row["status"] == "running":
@@ -524,16 +667,18 @@ class RunListScreen(Screen):
                     pass
                 return
 
-    def _rebuild_table(self) -> None:
+    def _rebuild_table(self, *, rebuild_columns: bool = False) -> None:
         """Clear and repopulate the DataTable from self._rows in place."""
         table = self.query_one("#run_table", DataTable)
         is_active = self.app.screen is self
         had_focus = table.has_focus if is_active else False
 
-        table.clear()
+        table.clear(columns=rebuild_columns)
+        if rebuild_columns:
+            self._add_columns(table)
 
         if not self._rows:
-            table.add_row("(no runs)", "", "", "", "")
+            table.add_row("(no runs)", "", "", "", "", "")
             self.query_one("#title_bar", Static).update(" handoff runs  ·  0 runs")
             self._update_footer()
             return

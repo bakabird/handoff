@@ -120,7 +120,7 @@ def _open_interactive(
 
     model = resolve_backend_model(backend_cfg, pro)
     backend_cfg["_resolved_model"] = model
-    backend_cfg["_system_prompt"] = config.system_prompt
+    backend_cfg["_system_prompt"] = config.backend_system_prompt(backend_name)
 
     unset_keys, set_env = _resolved_open_env(backend_cfg, model)
     _apply_env(unset_keys, set_env)

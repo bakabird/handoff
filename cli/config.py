@@ -291,11 +291,25 @@ class Config:
 
     @property
     def system_prompt(self) -> str:
-        """User's system_prompt if set, otherwise the built-in default."""
+        """User's global system_prompt if set, otherwise the built-in default."""
         user_sp = self._user.get("system_prompt")
-        if user_sp is not None:
-            return user_sp
-        return self._backend_types.get("system_prompt", "")
+        return user_sp if user_sp is not None else self._backend_types.get("system_prompt", "")
+
+    def backend_system_prompt(self, backend_name: str) -> str:
+        """Return the global prompt with this backend's optional suffix."""
+        base = self.system_prompt
+
+        backend = self._user.get("backends", {}).get(backend_name, {})
+        extra = backend.get("system_prompt") if isinstance(backend, dict) else None
+        if extra is None or extra == "":
+            return base
+        if not isinstance(extra, str):
+            print(
+                f"handoff: backend '{backend_name}' system_prompt must be a string",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        return f"{base}\n\n{extra}" if base else extra
 
     @property
     def type_defaults(self) -> dict:

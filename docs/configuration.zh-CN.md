@@ -123,8 +123,22 @@ backends:
 ```yaml
 # ~/.handoff/config.yaml
 system_prompt: |
-  你是一个精于代码实现的助手。收到任务后直接开始写代码，不要...
+你是一个精于代码实现的助手。收到任务后直接开始写代码，不要...
 ```
+
+也可以在单个 backend 下追加专属指令。它总是排在上述全局（或内置）提示之后：
+
+```yaml
+backends:
+  codex:
+    type: codex
+    model: gpt-5.5
+    system_prompt: |
+      这个指令只对 codex 生效。
+```
+
+Claude 型 backend 使用 `--append-system-prompt`；Codex 型 backend 使用其
+`developer_instructions` 配置项注入同一段内容，不会把指令拼进任务正文。
 
 这是唯一可以覆盖的内置值。其他机制层字段（`type_defaults`、flag 模板等）无法在用户 config 中覆盖——即使写了也会被警告并忽略。
 
@@ -139,6 +153,7 @@ system_prompt: |
 | `model` | 默认模型名（claude 型必填） |
 | `pro_model` | `--pro` 时使用的模型名 |
 | `env` | 该 backend 专属的环境变量。支持 `{model}`、`{pro_model}`、`{home}` 占位符，以及 `${ENV_VAR}` shell 展开 |
+| `system_prompt` | 追加到全局/内置 system_prompt 之后的 backend 专属指令 |
 
 顶层可写字段：
 

@@ -21,6 +21,7 @@ Placeholder substitution:
   {system_prompt}  — configured system prompt
   {model}          — resolved model name (backend's model or pro_model)
   {pro_model}      — backend's pro_model
+  {model_reasoning_effort} — resolved Codex reasoning effort
   {cwd}            — working directory of the run
   {home}           — $HOME
 """
@@ -30,6 +31,7 @@ from __future__ import annotations
 import os
 import shlex
 import sys
+import json
 from typing import Optional
 
 
@@ -46,13 +48,20 @@ def _resolve_env_val(val, ctx: dict):
     return val
 
 
-def _base_ctx(backend: dict, model: str = "", pro_model: str = "", cwd: str = "") -> dict:
+def _base_ctx(
+    backend: dict,
+    model: str = "",
+    pro_model: str = "",
+    model_reasoning_effort: str = "",
+    cwd: str = "",
+) -> dict:
     return {
         "prompt": "",
         "session_id": "",
         "system_prompt": backend.get("_system_prompt", ""),
         "model": model or backend.get("_resolved_model", ""),
         "pro_model": pro_model or backend.get("pro_model", ""),
+        "model_reasoning_effort": model_reasoning_effort or backend.get("_resolved_model_reasoning_effort", ""),
         # legacy alias kept so old user configs with {default_model} don't crash
         "default_model": model or backend.get("_resolved_model", ""),
         "cwd": cwd,
@@ -133,6 +142,7 @@ def build_args(
     session_id: Optional[str] = None,
     model: Optional[str] = None,
     pro_model: Optional[str] = None,
+    model_reasoning_effort: Optional[str] = None,
     resume: bool = False,
     cwd: str = "",
 ) -> list[str]:
@@ -147,31 +157,53 @@ def build_args(
     A continuation is continue_id_flags alone (`codex exec resume --json <id>
     <prompt>`) because `codex exec resume` rejects --sandbox/-C.
     """
-    ctx = _base_ctx(backend, model=model or "", pro_model=pro_model or "", cwd=cwd)
+    ctx = _base_ctx(
+        backend,
+        model=model or "",
+        pro_model=pro_model or "",
+        model_reasoning_effort=model_reasoning_effort or "",
+        cwd=cwd,
+    )
     ctx["prompt"] = prompt
     ctx["session_id"] = session_id or ""
 
     command = _resolve_env_val(backend.get("command") or backend.get("claude_command", "claude"), ctx)
     args = [command]
 
-    if backend_type(backend) == "codex" and resume and session_id:
+    is_codex = backend_type(backend) == "codex"
+
+    if is_codex and resume and session_id:
         for flag in backend.get("continue_id_flags", []):
             resolved = _resolve_env_val(flag, ctx)
             if resolved:
                 args.append(resolved)
-        return args
-
-    for flag in backend.get("session_flags", []):
-        resolved = _resolve_env_val(flag, ctx)
-        if resolved:
-            args.append(resolved)
-
-    if session_id:
-        id_flags_key = "continue_id_flags" if resume else "session_id_flags"
-        for flag in backend.get(id_flags_key, []):
+    else:
+        for flag in backend.get("session_flags", []):
             resolved = _resolve_env_val(flag, ctx)
             if resolved:
                 args.append(resolved)
+
+        if is_codex and model_reasoning_effort:
+            prompt = args.pop() if args and args[-1] == prompt else None
+            args.extend(["-c", f'model_reasoning_effort="{model_reasoning_effort}"'])
+            if prompt is not None:
+                args.append(prompt)
+
+        if session_id:
+            id_flags_key = "continue_id_flags" if resume else "session_id_flags"
+            for flag in backend.get(id_flags_key, []):
+                resolved = _resolve_env_val(flag, ctx)
+                if resolved:
+                    args.append(resolved)
+
+    if is_codex and ctx["system_prompt"]:
+        # Codex has no --append-system-prompt flag. Its documented
+        # developer_instructions config key is injected as developer context;
+        # JSON string encoding is also valid TOML basic-string encoding.
+        if args and args[-1] == prompt:
+            args[-1:-1] = ["-c", f"developer_instructions={json.dumps(ctx['system_prompt'], ensure_ascii=False)}"]
+        else:
+            args.extend(["-c", f"developer_instructions={json.dumps(ctx['system_prompt'], ensure_ascii=False)}"])
 
     return args
 
@@ -202,6 +234,10 @@ def build_resume_args(
         if resolved:
             args.append(resolved)
 
+    if backend_type(backend) == "codex" and ctx["system_prompt"]:
+        # `codex resume` takes the thread id last, so insert config before it.
+        args[-1:-1] = ["-c", f"developer_instructions={json.dumps(ctx['system_prompt'], ensure_ascii=False)}"]
+
     return args
 
 
@@ -210,6 +246,14 @@ def resolve_backend_model(backend: dict, is_pro: bool = False) -> str:
     model = backend.get("pro_model" if is_pro else "model") or backend.get("model") or ""
     ctx = {"home": os.path.expanduser("~")}
     return _resolve_env_val(model, ctx) if model else ""
+
+
+def resolve_backend_reasoning_effort(backend: dict, is_pro: bool = False) -> str:
+    """Return the Codex reasoning effort for this backend, if configured."""
+    key = "pro_model_reasoning_effort" if is_pro else "model_reasoning_effort"
+    effort = backend.get(key) or ""
+    ctx = {"home": os.path.expanduser("~")}
+    return _resolve_env_val(effort, ctx) if effort else ""
 
 
 def ensure_backend_token_ready(backend_name: str, backend: dict, user_config_path: str):

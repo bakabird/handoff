@@ -6,6 +6,38 @@ from ..core import find_run, format_run_row, get_db
 from ..config import Config
 
 
+RUN_SELECT = """
+    SELECT
+        r.seq,
+        r.run_id,
+        r.uuid,
+        r.session_id,
+        r.cwd,
+        r.prompt,
+        r.created_at,
+        r.jsonl_path,
+        r.status,
+        r.backend,
+        r.runtime_info,
+        (
+            SELECT first.run_id
+            FROM runs AS first
+            WHERE COALESCE(NULLIF(first.session_id, ''), first.uuid)
+                = COALESCE(NULLIF(r.session_id, ''), r.uuid)
+            ORDER BY first.seq ASC
+            LIMIT 1
+        ) AS first_session_run_id,
+        (
+            SELECT COUNT(*)
+            FROM runs AS prev
+            WHERE COALESCE(NULLIF(prev.session_id, ''), prev.uuid)
+                = COALESCE(NULLIF(r.session_id, ''), r.uuid)
+              AND prev.seq < r.seq
+        ) AS resume_index
+    FROM runs AS r
+"""
+
+
 def cmd_list(argv: list[str], config: Config):
     """handoff list [<run-id|seq>] [--uuid] [--cwd] [--follow]"""
     show_uuid = False
@@ -37,16 +69,18 @@ def cmd_list(argv: list[str], config: Config):
 
     def _recent_rows():
         return conn.execute(
-            "SELECT seq, run_id, uuid, cwd, prompt, created_at, jsonl_path, status, backend, runtime_info "
-            "FROM runs ORDER BY created_at DESC LIMIT 50"
+            RUN_SELECT + " ORDER BY r.created_at DESC LIMIT 50"
         ).fetchall()
+
+    def _find_enriched_run(run_id: str):
+        return conn.execute(RUN_SELECT + " WHERE r.run_id = ?", (run_id,)).fetchone()
 
     def _ensure_row(rows, pinned_run_id: str | None):
         if not pinned_run_id:
             return rows
         if any(r["run_id"] == pinned_run_id for r in rows):
             return rows
-        pinned = find_run(conn, pinned_run_id)
+        pinned = _find_enriched_run(pinned_run_id)
         if not pinned:
             return rows
         return [pinned, *rows]
@@ -59,6 +93,8 @@ def cmd_list(argv: list[str], config: Config):
         sys.exit(1)
 
     initial_run_id = selected_row["run_id"] if selected_row else ""
+    if initial_run_id:
+        selected_row = _find_enriched_run(initial_run_id) or selected_row
     rows = _ensure_row(rows, initial_run_id or None)
 
     if not rows:

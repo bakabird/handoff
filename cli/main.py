@@ -15,7 +15,7 @@ def usage(config=None):
   handoff new       --backend <name> [--slug <slug>] [--write]
   handoff list|ls   [<run-id|seq>] [--uuid] [--cwd] [--follow]
   handoff open      [<run-id|seq>] [--pro] [--cwd <dir>] [--verbose]
-  handoff run       [--backend <name>] [--cwd <dir>] [--slug <slug>] [--pro] [--verbose] (<input-file|-> | --text <prompt...>)
+  handoff run       [--backend <name>] [--cwd <dir>] [--slug <slug>] [--pro] [--verbose] [--dry-run] (<input-file|-> | --text <prompt...>)
   handoff resume    [<run-id|seq>] [--slug <slug>] [--pro] [--cwd <dir>] [--verbose] [(<input-file|-> | --text <prompt...>)]
   handoff tail [<run-id|seq>]
 
@@ -25,6 +25,8 @@ def usage(config=None):
   handoff list <seq> --follow
                           — jump straight into one run's live detail view
   handoff open <seq>      — reopen a past conversation (interactive)
+  handoff run --dry-run --text hi
+                          — print the exact backend command without executing it
   handoff run --text hi    — quick smoke-test / debug your config.yaml
   handoff resume <seq>     — reopen a past conversation (interactive)
   handoff resume <seq> -   — dispatch a follow-up task to that conversation (heredoc/--text)

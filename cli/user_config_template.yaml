@@ -35,3 +35,7 @@ backends:
     type: codex
     model: gpt-5.5 # you can change to gpt-5.4
     pro_model: gpt-5.5
+    pro_model_reasoning_effort: xhigh
+    # 追加到顶层 system_prompt 之后；Codex 会将其作为 developer instructions 注入。
+    # system_prompt: |
+    #   此 backend 专属的附加指令。

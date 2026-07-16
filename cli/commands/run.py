@@ -18,6 +18,7 @@ from ..backend import (
     format_shell_command,
     resolved_backend_env,
     resolve_backend_model,
+    resolve_backend_reasoning_effort,
     wrap_with_pty,
 )
 from ..stream import execute_run
@@ -181,7 +182,17 @@ def cmd_run(argv: list[str], config: Config):
 
     backend_name = backend_arg or config.default_backend
 
-    _execute(cwd, prompt_text, backend_name, pro, config, slug=slug, adopted_run_id=adopted_run_id, verbose=verbose)
+    _execute(
+        cwd,
+        prompt_text,
+        backend_name,
+        pro,
+        config,
+        slug=slug,
+        adopted_run_id=adopted_run_id,
+        verbose=verbose,
+        dry_run=dry_run,
+    )
 
 
 def _execute(
@@ -194,6 +205,7 @@ def _execute(
     slug: str = "task",
     adopted_run_id: str | None = None,
     verbose: bool = False,
+    dry_run: bool = False,
 ):
     """Shared execution path for file, stdin, and --text run modes.
 
@@ -216,6 +228,56 @@ def _execute(
         sys.exit(2)
 
     ensure_backend_token_ready(backend_name, backend_cfg, config.user_config_path)
+
+    if dry_run:
+        model = resolve_backend_model(backend_cfg, pro)
+        if not model:
+            print(
+                f"handoff: backend '{backend_name}' resolves no model. "
+                f"Set backends.{backend_name}.model in {config.user_config_path} "
+                f"(pre-0.3 configs carried this in the now-removed top-level default_model).",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+        backend_cfg["_resolved_model"] = model
+        backend_cfg["_system_prompt"] = config.backend_system_prompt(backend_name)
+        model_reasoning_effort = resolve_backend_reasoning_effort(backend_cfg, pro)
+        backend_cfg["_resolved_model_reasoning_effort"] = model_reasoning_effort
+
+        btype = backend_type(backend_cfg)
+        session_id = (
+            resume_session_id
+            if resume_session_id
+            else "00000000-0000-0000-0000-000000000000"
+            if btype == "claude"
+            else None
+        )
+        backend_cmd = build_args(
+            backend_cfg,
+            prompt_text,
+            session_id,
+            model=model,
+            pro_model=backend_cfg.get("pro_model", ""),
+            model_reasoning_effort=model_reasoning_effort,
+            resume=bool(resume_session_id),
+            cwd=cwd,
+        )
+        backend_cmd = _with_codex_bypass(backend_cmd, btype)
+        cmd = wrap_with_pty(backend_cfg, backend_cmd)
+        unset_keys, set_env = resolved_backend_env(
+            backend_cfg, model, backend_cfg.get("pro_model", "")
+        )
+
+        print("DRY_RUN=1")
+        print(f"BACKEND={backend_name}")
+        print(f"TYPE={btype}")
+        print(f"MODEL={model}")
+        print(f"PRO={'true' if pro else 'false'}")
+        print(f"CWD={cwd}")
+        print(f"SESSION={session_id or 'pending'}")
+        print(f"CMD: {format_shell_command(cwd, cmd, unset_keys, set_env)}")
+        return
 
     conn = get_db()
 
@@ -260,7 +322,9 @@ def _execute(
         )
         sys.exit(2)
     backend_cfg["_resolved_model"] = model
-    backend_cfg["_system_prompt"] = config.system_prompt
+    backend_cfg["_system_prompt"] = config.backend_system_prompt(backend_name)
+    model_reasoning_effort = resolve_backend_reasoning_effort(backend_cfg, pro)
+    backend_cfg["_resolved_model_reasoning_effort"] = model_reasoning_effort
     update_runtime_info(conn, uid, model=model, pro=pro)
     conn.commit()
 
@@ -286,9 +350,11 @@ def _execute(
         backend_cfg, prompt_text, session_id,
         model=model,
         pro_model=backend_cfg.get("pro_model", ""),
+        model_reasoning_effort=model_reasoning_effort,
         resume=bool(resume_session_id),
         cwd=cwd,
     )
+    backend_cmd = _with_codex_bypass(backend_cmd, btype)
     cmd = wrap_with_pty(backend_cfg, backend_cmd)
 
     if verbose:
