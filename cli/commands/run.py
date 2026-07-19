@@ -41,11 +41,28 @@ def _is_adopted_path(input_src: str) -> bool:
     return parse_new_run_id(stem) is not None
 
 
+def _with_codex_bypass(args: list[str], backend_kind: str) -> list[str]:
+    """Add Codex's non-interactive bypass flag immediately after its subcommand."""
+    if backend_kind != "codex":
+        return args
+
+    args = list(args)
+    try:
+        insert_at = args.index("exec") + 1
+    except ValueError:
+        return args
+    if insert_at < len(args) and args[insert_at] == "resume":
+        insert_at += 1
+    args.insert(insert_at, "--dangerously-bypass-approvals-and-sandbox")
+    return args
+
+
 def cmd_run(argv: list[str], config: Config):
-    """handoff run [--backend <name>] [--cwd <dir>] [--slug <slug>] [--pro] [--verbose] (<input-file|-> | --text <prompt...>)."""
-    # Pre-scan --verbose so it works regardless of position (e.g. after --text).
+    """handoff run [--backend <name>] [--cwd <dir>] [--slug <slug>] [--pro] [--verbose] [--dry-run] (<input-file|-> | --text <prompt...>)."""
+    # Pre-scan flags that should work regardless of position (e.g. after --text).
     verbose = "--verbose" in argv
-    filtered = [a for a in argv if a != "--verbose"]
+    dry_run = "--dry-run" in argv
+    filtered = [a for a in argv if a not in ("--verbose", "--dry-run")]
 
     pro = False
     cwd = ""
