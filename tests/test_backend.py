@@ -1,4 +1,4 @@
-from cli.backend import build_args, resolve_backend_reasoning_effort
+from cli.backend import build_args, build_resume_args, resolve_backend_reasoning_effort
 
 
 def _codex_backend(**overrides):
@@ -82,4 +82,24 @@ def test_codex_resume_keeps_developer_instructions_out_of_user_prompt():
     assert args == [
         "codex", "exec", "resume", "--json", "session-1",
         "-c", 'developer_instructions="backend extra"', "hello",
+    ]
+
+
+def test_interactive_codex_open_uses_resume_subcommand_without_prompt():
+    backend = _codex_backend(resume_flags=["resume", "{session_id}"])
+
+    assert build_resume_args(backend, "session-1") == [
+        "codex", "resume", "session-1",
+    ]
+
+
+def test_interactive_claude_open_uses_resume_flag_without_print_mode():
+    backend = {
+        "type": "claude",
+        "command": "claude",
+        "resume_flags": ["--resume", "{session_id}", "--dangerously-skip-permissions"],
+    }
+
+    assert build_resume_args(backend, "session-1") == [
+        "claude", "--resume", "session-1", "--dangerously-skip-permissions",
     ]

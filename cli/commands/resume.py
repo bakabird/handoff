@@ -1,27 +1,18 @@
-"""handoff resume command.
-
-Unifies "reopen a past conversation" into one verb, keyed by seq (or run-id):
-
-  handoff resume <seq>                  — interactive: drop into `claude --resume`
-  handoff resume <seq> - <<'EOF' ...    — non-interactive: dispatch a new task to
-  handoff resume <seq> --text "..."       that same conversation (claude -p --resume),
-                                          running through the normal run pipeline.
-
-The seq → session mapping comes from the runs table: the selected row's
-`session_id` is the underlying claude conversation. `--resume` does not fork, so
-the original seq stays a stable handle — keep using it to add more turns.
-"""
+"""Append a managed non-interactive turn to an existing conversation."""
 
 import os
 import sys
 
-from ..core import get_db, find_run, row_value
 from ..config import Config
+from ..core import backend_abbrev, parse_new_run_id
+from .session_target import resolve_session_target
+from .run import _is_adopted_path
 
 
 def cmd_resume(argv: list[str], config: Config):
-    """handoff resume [<run-id|seq>] [--backend <name>] [--slug <slug>] [--pro] [--cwd <dir>]
-    [--verbose] [(<input-file|-> | --text <prompt...>)]."""
+    """handoff resume [<run-id|seq>] [--backend <name>] [--session-id <id>]
+    [--slug <slug>] [--pro] [--cwd <dir>] [--verbose]
+    (<input-file|-> | --text <prompt...>)."""
     # Pre-scan --verbose so it works regardless of position (e.g. after --text).
     verbose = "--verbose" in argv
     filtered = [a for a in argv if a != "--verbose"]
@@ -29,12 +20,12 @@ def cmd_resume(argv: list[str], config: Config):
     pro = False
     cwd = ""
     backend_arg = ""
+    session_id_arg: str | None = None
     slug_arg = ""
-    selector = ""
     input_src = ""
     text_mode = False
     text_parts = []
-    have_selector = False
+    positionals = []
 
     i = 0
     while i < len(filtered):
@@ -55,6 +46,14 @@ def cmd_resume(argv: list[str], config: Config):
             backend_arg = filtered[i]
         elif a.startswith("--backend="):
             backend_arg = a.split("=", 1)[1]
+        elif a == "--session-id":
+            i += 1
+            if i >= len(filtered):
+                print("handoff resume: --session-id requires a value", file=sys.stderr)
+                sys.exit(2)
+            session_id_arg = filtered[i]
+        elif a.startswith("--session-id="):
+            session_id_arg = a.split("=", 1)[1]
         elif a == "--slug":
             i += 1
             if i >= len(filtered):
@@ -94,33 +93,49 @@ def cmd_resume(argv: list[str], config: Config):
             print(f"handoff resume: unknown option {a}", file=sys.stderr)
             sys.exit(2)
         else:
-            # First bare positional is the selector (seq/run-id); a second one is
-            # an input file (prompt source).
-            if not have_selector:
-                selector = a
-                have_selector = True
-            elif text_mode:
-                print("handoff resume: --text cannot be combined with an input file", file=sys.stderr)
-                sys.exit(2)
-            else:
-                input_src = a
+            positionals.append(a)
         i += 1
 
-    # Resolve the target conversation.
-    conn = get_db()
-    row = find_run(conn, selector or None)
+    # In external-session mode the one optional positional is the prompt file;
+    # otherwise positionals retain the existing selector + prompt-file meaning.
+    if session_id_arg is not None:
+        if len(positionals) > 1:
+            print(f"handoff resume: unexpected extra argument {positionals[1]}", file=sys.stderr)
+            sys.exit(2)
+        if positionals:
+            if input_src:
+                print(f"handoff resume: unexpected extra argument {positionals[0]}", file=sys.stderr)
+                sys.exit(2)
+            input_src = positionals[0]
+        if text_mode and input_src:
+            print("handoff resume: --text cannot be combined with an input file", file=sys.stderr)
+            sys.exit(2)
+        selector = ""
+    else:
+        if len(positionals) > 2:
+            print(f"handoff resume: unexpected extra argument {positionals[2]}", file=sys.stderr)
+            sys.exit(2)
+        selector = positionals[0] if positionals else ""
+        if len(positionals) == 2:
+            if input_src:
+                print(f"handoff resume: unexpected extra argument {positionals[1]}", file=sys.stderr)
+                sys.exit(2)
+            input_src = positionals[1]
 
-    if not row:
-        conn.close()
-        print("handoff resume: no run found", file=sys.stderr)
-        sys.exit(1)
+    target = resolve_session_target(
+        config,
+        command="resume",
+        selector=selector,
+        backend_arg=backend_arg,
+        session_id_arg=session_id_arg,
+        cwd_arg=cwd,
+        pro_override=True if pro else None,
+    )
 
-    session_id = row_value(row, "session_id", "") or row["uuid"]
-    row_cwd = row["cwd"]
-    saved_backend = row_value(row, "backend", "") or ""
-
-    # Decide prompt source → interactive vs continuation.
+    # Decide prompt source. Unlike `open`, `resume` always appends a prompt and
+    # therefore always enters the managed run pipeline.
     prompt_text = None
+    adopted_run_id: str | None = None
     if text_mode:
         prompt_text = " ".join(text_parts)
         if not prompt_text:
@@ -135,40 +150,38 @@ def cmd_resume(argv: list[str], config: Config):
         with open(input_src, encoding="utf-8") as f:
             prompt_text = f.read()
 
-    if not cwd:
-        cwd = row_cwd
-    if not os.path.isdir(cwd):
-        print(f"handoff resume: cwd not found: {cwd}", file=sys.stderr)
-        sys.exit(2)
+        if _is_adopted_path(input_src):
+            # Adopt the run_id pre-allocated by `handoff new`, so the caller
+            # knows the .result.md path before the turn is dispatched.
+            stem = os.path.basename(input_src)[: -len(".prompt.md")]
+            _mmdd, file_b2, _seq_code, _slug = parse_new_run_id(stem)  # type: ignore[misc]
+            expected_b2 = backend_abbrev(target.backend_name)
+            if file_b2 != expected_b2:
+                print(
+                    f"handoff resume: adopted file has backend '{file_b2}' but this "
+                    f"session resolves to '{target.backend_name}' (abbrev '{expected_b2}'). "
+                    f"Create the prompt file with a matching --backend.",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            adopted_run_id = stem
 
-    # A continuation must stay on the conversation's original backend — the
-    # session id only means something to the CLI that created it.
-    if backend_arg and saved_backend and backend_arg != saved_backend:
+    if prompt_text is None or not prompt_text.strip():
         print(
-            f"handoff resume: this conversation belongs to backend '{saved_backend}'; "
-            f"it cannot be resumed with --backend {backend_arg}. "
-            f"Use `handoff run --backend {backend_arg}` to start a new conversation.",
+            "handoff resume: prompt required; use `handoff open` for an interactive session",
             file=sys.stderr,
         )
         sys.exit(2)
-    backend_name = saved_backend or backend_arg or config.default_backend
 
-    if prompt_text is None:
-        # Interactive: reopen the conversation in claude (replaces this process).
-        conn.close()
-        from .open import _open_interactive
-        _open_interactive(config, backend_name, session_id, cwd, pro, verbose=verbose)
-    else:
-        # Non-interactive: dispatch a new turn through the run pipeline.
-        conn.close()
-        from .run import _execute
-        _execute(
-            cwd,
-            prompt_text,
-            backend_name,
-            pro,
-            config,
-            resume_session_id=session_id,
-            slug=slug_arg or "resume",
-            verbose=verbose,
-        )
+    from .run import _execute
+    _execute(
+        target.cwd,
+        prompt_text,
+        target.backend_name,
+        target.pro,
+        config,
+        resume_session_id=target.session_id,
+        slug=slug_arg or "resume",
+        adopted_run_id=adopted_run_id,
+        verbose=verbose,
+    )

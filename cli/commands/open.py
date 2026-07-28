@@ -12,20 +12,21 @@ from ..backend import (
     resolved_backend_env,
     resolve_backend_model,
 )
-from ..core import find_run, get_db, row_value
-from ..runtime_info import parse_runtime_info
 from ..config import Config
+from .session_target import resolve_session_target
 
 
 _OPEN_DROP_ENV_KEYS = {"ANTHROPIC_CLAUDECODE_PERMISSION_ACCEPT_ALL"}
 
 
 def cmd_open(argv: list[str], config: Config):
-    """handoff open [<run-id|seq>] [--pro] [--cwd <dir>] [--backend <name>] [--verbose]."""
+    """handoff open [<run-id|seq>] [--backend <name>] [--session-id <id>]
+    [--pro] [--cwd <dir>] [--verbose]."""
     verbose = "--verbose" in argv
     filtered = [a for a in argv if a != "--verbose"]
 
     backend_arg = ""
+    session_id_arg: str | None = None
     cwd = ""
     selector = ""
     pro_override: bool | None = None
@@ -47,6 +48,14 @@ def cmd_open(argv: list[str], config: Config):
             backend_arg = filtered[i]
         elif a.startswith("--backend="):
             backend_arg = a.split("=", 1)[1]
+        elif a == "--session-id":
+            i += 1
+            if i >= len(filtered):
+                print("handoff open: --session-id requires a value", file=sys.stderr)
+                sys.exit(2)
+            session_id_arg = filtered[i]
+        elif a.startswith("--session-id="):
+            session_id_arg = a.split("=", 1)[1]
         elif a == "--pro":
             pro_override = True
         elif a in ("-h", "--help"):
@@ -63,42 +72,23 @@ def cmd_open(argv: list[str], config: Config):
             selector = a
         i += 1
 
-    conn = get_db()
-    row = find_run(conn, selector or None)
-    if not row:
-        conn.close()
-        print("handoff open: no run found", file=sys.stderr)
-        sys.exit(1)
-
-    session_id = row_value(row, "session_id", "") or row["uuid"]
-    saved_backend = row_value(row, "backend", "") or ""
-    row_cwd = row["cwd"]
-    pro = _row_is_pro(row) if pro_override is None else pro_override
-
-    if not cwd:
-        cwd = row_cwd
-    if not os.path.isdir(cwd):
-        conn.close()
-        print(f"handoff open: cwd not found: {cwd}", file=sys.stderr)
-        sys.exit(2)
-
-    if backend_arg and saved_backend and backend_arg != saved_backend:
-        conn.close()
-        print(
-            f"handoff open: this conversation belongs to backend '{saved_backend}'; "
-            f"it cannot be opened with --backend {backend_arg}.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    backend_name = saved_backend or backend_arg or config.default_backend
-    conn.close()
-
-    _open_interactive(config, backend_name, session_id, cwd, pro, verbose=verbose)
-
-
-def _row_is_pro(row) -> bool:
-    info = parse_runtime_info(row_value(row, "runtime_info", ""))
-    return bool(info.get("pro"))
+    target = resolve_session_target(
+        config,
+        command="open",
+        selector=selector,
+        backend_arg=backend_arg,
+        session_id_arg=session_id_arg,
+        cwd_arg=cwd,
+        pro_override=pro_override,
+    )
+    _open_interactive(
+        config,
+        target.backend_name,
+        target.session_id,
+        target.cwd,
+        target.pro,
+        verbose=verbose,
+    )
 
 
 def _open_interactive(

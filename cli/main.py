@@ -14,9 +14,9 @@ def usage(config=None):
   handoff init      [-y|--yes]
   handoff new       --backend <name> [--slug <slug>] [--write]
   handoff list|ls   [<run-id|seq>] [--uuid] [--cwd] [--follow]
-  handoff open      [<run-id|seq>] [--pro] [--cwd <dir>] [--verbose]
+  handoff open      [<run-id|seq>] [--backend <name>] [--session-id <id>] [--pro] [--cwd <dir>] [--verbose]
   handoff run       [--backend <name>] [--cwd <dir>] [--slug <slug>] [--pro] [--verbose] [--dry-run] (<input-file|-> | --text <prompt...>)
-  handoff resume    [<run-id|seq>] [--slug <slug>] [--pro] [--cwd <dir>] [--verbose] [(<input-file|-> | --text <prompt...>)]
+  handoff resume    [<run-id|seq>] [--backend <name>] [--session-id <id>] [--slug <slug>] [--pro] [--cwd <dir>] [--verbose] (<input-file|-> | --text <prompt...>)
   handoff tail [<run-id|seq>]
 
   handoff env              — print config / data paths (works even with broken config)
@@ -25,19 +25,22 @@ def usage(config=None):
   handoff list <seq> --follow
                           — jump straight into one run's live detail view
   handoff open <seq>      — reopen a past conversation (interactive)
+  handoff open --backend codex --session-id <id> --cwd <dir>
+                          — interactively open a conversation outside handoff.db
   handoff run --dry-run --text hi
                           — print the exact backend command without executing it
   handoff run --text hi    — quick smoke-test / debug your config.yaml
-  handoff resume <seq>     — reopen a past conversation (interactive)
   handoff resume <seq> -   — dispatch a follow-up task to that conversation (heredoc/--text)
+  handoff resume --backend opus --session-id <id> --cwd <dir> --text hi
+                          — append a managed turn to an external conversation
   handoff tail             — alias for `handoff list --follow` on the latest run
 
 Run ids: <mmdd>-<backend2>-<SEQ_CODE>-<slug>  (e.g. 0611-ds-03-fix-auth)
---cwd defaults to the current directory of the calling process.
+--cwd defaults to the calling process's current directory for run; explicit-session open/resume requires it.
 --backend picks a backend (default: first entry in config.yaml backends).
 --slug sets the semantic suffix in generated run ids.
 --write on `handoff new` writes stdin to the pre-allocated .prompt.md file.
---pro uses the backend's pro_model. A resume stays on its original backend."""
+--pro uses the backend's pro_model. Managed open/resume inherit the original run's pro setting."""
     )
 
 
