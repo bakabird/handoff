@@ -4,29 +4,28 @@
 
 本文档解释 handoff 的几个关键设计决策。
 
-## 为什么 Claude Code 用后台 shell、Codex 用 subagent
+## 为什么统一使用 skill
 
-在 Claude Code 和 Codex 里 handoff 任务的机制不同，各有原因：
+Handoff 将同一组 skills 安装到 Claude Code 和 Codex 的标准 skill 目录，避免为每个
+宿主维护不同的调用协议。`handoff init` 自动发现所有内置 `SKILL.md`：
 
-**Claude Code — 后台 shell（`/handoff-ds` 等 skill）**
+- Claude Code 使用软链接安装到 `~/.claude/skills/`，便于看到与源码的关联。
+- Codex 使用硬链接安装到 `~/.codex/skills/`；旧版
+  `~/.codex/agents/handoff-*.toml` 会被重命名为 `.removed.bak`，不会直接删除。
+- Claude Code 不安装 `handoff-opus`，避免宿主模型把“请 Opus 处理”误解为再次派发。
+- Codex 侧的 `handoff-codex` 带有 `agents/openai.yaml`，只允许显式调用。
 
-Claude Code 对后台 shell 支持极好：
+skill 内部先通过 `handoff new --write` 创建规范的 prompt 文件并确定 run ID，再调用
+`handoff run` 或 `handoff resume`。因此任务启动前即可知道 `.result.md` 路径，不必从
+长时间运行的命令输出中捕获路径。
+
+在 Claude Code 中，skill 使用后台 shell：
+
 - 能以**通知**方式感知任务完成——不需要轮询
 - 展开后台 shell 就能看到实时进度（stderr），走 shell view，**不烧主会话上下文**
 - 主 session 全程不阻塞、几乎不耗 token
 
-所以直接把 `handoff run` 跑在后台 shell 是最优解。
-
-**Codex — subagent（`handoff-ds` subagent）**
-
-Codex 不支持通知，只能轮询。每轮询一次就消耗一次主 session 的 cache read，对动辄 5~20 分钟的任务会烧掉大量 token。但 Codex 能感知 **subagent 的完成事件**——
-
-所以改用一个廉价的 `gpt-5.4-mini` low-effort subagent，**阻塞式**调用 `handoff run --backend deepseek <PROMPT_FILE> >/dev/null`：
-- stderr 持续输出进度，防止 subagent 长时间静默超时
-- stdout 的最终正文被丢弃（`>/dev/null`）
-- 结束后只把一行 `RESULT=` 路径带回主 session
-
-subagent 的完整指令见 `cli/skills/handoff-ds.toml`。
+Codex 从自己的 skill 目录加载同名说明，不再依赖单独的 `.toml` agent 定义。
 
 ## RESULT= 协议
 
@@ -48,7 +47,7 @@ RESULT=~/.handoff/tasks/hd-0611-03.result.md
 - 进度同时落盘到 `.out.txt`（与 `RESULT=` 路径同名，后缀换 `.out.txt`）
 - 输入落盘到 `.prompt.txt`
 
-这个极简协议让 handoff 能对接任何能执行 shell 命令的 AI 平台——skill 或 subagent 只需捕获 `RESULT=` 一行，其余全部交给文件系统。
+这个极简协议让 handoff 能对接任何能执行 shell 命令的 AI 平台——skill 只需确定结果路径，其余全部交给文件系统。
 
 ## codex 集成
 

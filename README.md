@@ -45,7 +45,7 @@ So: **only pay for the SOTA model** (Opus / GPT-5.5) — use it to plan and revi
 
 ```bash
 uv tool install handoff-cli
-handoff init        # creates the config, links skill / agent files
+handoff init        # creates the config and links skill files
 uv tool upgrade handoff-cli   # update to the latest version
 ```
 
@@ -92,11 +92,11 @@ The task runs in the background; your session is never blocked. When it finishes
 | What you say | From | Hands off to | Best for |
 | --- | --- | --- | --- |
 | `/handoff-ds` | Claude Code | DeepSeek V4 | Execution work: writing code, running tests, refactors, bulk edits |
-| `handoff-ds` (subagent) | Codex | DeepSeek V4 | Same as above — use this when you're inside Codex |
+| `handoff-ds` | Codex | DeepSeek V4 | Same as above — use this when you're inside Codex |
 | `/handoff-codex` | Claude Code | Codex (GPT-5.5) | Heavy reasoning, second opinions, hard bugs |
 | `/handoff-opus` | codex/deepseek | Claude Opus | Decisions that deserve the top model |
 
-> Codex has no slash commands — from Codex you invoke the subagent of the same name instead: say "have `handoff-ds` execute the task above."
+> Codex has no slash commands — mention the skill by name instead: say "have `handoff-ds` execute the task above."
 
 ### 5. Watch progress / browse history
 
@@ -217,4 +217,4 @@ The env block is entirely yours — every key=value you set is exported before t
 
 - **[CLI reference (Chinese) →](docs/cli-reference.zh-CN.md)** — full usage of `run` / `resume` / `list` / `tail` / `env` / `init`, run-id encoding, on-disk file layout.
 - **[Configuration (Chinese) →](docs/configuration.zh-CN.md)** — mechanism vs data layers, env block, `${ENV}` interpolation, include, custom backends.
-- **[Design notes (Chinese) →](docs/design.zh-CN.md)** — why Claude Code uses background shells while Codex uses a subagent; the RESULT= protocol.
+- **[Design notes (Chinese) →](docs/design.zh-CN.md)** — skill installation, execution strategy, and the RESULT= protocol.

@@ -46,7 +46,7 @@
 
 ```bash
 uv tool install handoff-cli
-handoff init        # 初始化配置，链接 skill / agent 文件
+handoff init        # 初始化配置并链接 skill 文件
 uv tool upgrade handoff-cli   # 更新到最新版
 ```
 
@@ -91,11 +91,11 @@ backends:
 | 你怎么说 | 从 | 派给 | 适合 |
 | --- | --- | --- | --- |
 | `/handoff-ds` | Claude Code | DeepSeek V4 | 写代码、跑测试、重构、批量修改等执行性工作 |
-| `handoff-ds`（subagent） | Codex | DeepSeek V4 | 同上——你人在 Codex 里时走这条 |
+| `handoff-ds` | Codex | DeepSeek V4 | 同上——你人在 Codex 里时走这条 |
 | `/handoff-codex` | Claude Code | Codex (GPT-5.5) | 复杂推理、第二意见、疑难调试 |
-| `/handoff-opus` | Claude Code | Claude Opus | 需要顶级模型出马的关键决策 |
+| `handoff-opus` | Codex / DeepSeek | Claude Opus | 需要顶级模型出马的关键决策 |
 
-> Codex 里没有 slash 命令，所以那行是同名 subagent：说「让 `handoff-ds` 执行上述任务」即可。
+> Codex 里没有 slash 命令，直接提到同名 skill：说「让 `handoff-ds` 执行上述任务」即可。
 
 ### 5. 盯进度 / 看历史
 
@@ -207,4 +207,4 @@ env 块完全由你定义——你设的每个 key=value 都会在拉起 CLI 前
 
 - **[命令参考 →](docs/cli-reference.zh-CN.md)** — `run` / `resume` / `list` / `tail` / `env` / `init` 全部用法，run id 编码与落盘文件布局。
 - **[配置文档 →](docs/configuration.zh-CN.md)** — 机制与数据两层、env 块、`${ENV}` 插值、include、自定义后端。
-- **[设计说明 →](docs/design.zh-CN.md)** — 为什么 Claude Code 用后台 shell、Codex 用 subagent；RESULT= 协议细节。
+- **[设计说明 →](docs/design.zh-CN.md)** — skill 安装、执行策略与 RESULT= 协议细节。

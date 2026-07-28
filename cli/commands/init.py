@@ -29,19 +29,115 @@ def _color(code: str, text: str) -> str:
     return f"\033[{code}m{text}\033[0m"
 
 
+def _bundled_skill_names(skills_dir: str) -> list[str]:
+    """Every bundled Claude Code skill — any subdir holding a SKILL.md.
+
+    Discovered rather than hardcoded so a new backend's skill cannot be
+    silently left uninstalled.
+    """
+    return sorted(
+        name for name in os.listdir(skills_dir)
+        if os.path.isfile(os.path.join(skills_dir, name, "SKILL.md"))
+    )
+
+
+# Where each host looks for skills.
+_HOST_SKILL_DIRS = {
+    "claude": (".claude", "skills"),
+    "codex": (".codex", "skills"),
+}
+
+# Codex skills must be regular-file hard links. Claude Code keeps symlinks so
+# the editable source relationship remains visible there.
+_HOST_LINK_KINDS = {
+    "claude": "soft link",
+    "codex": "hard link",
+}
+
+# A host must not see the skill that dispatches to its own model: the names
+# collide and the model reads "ask Opus" as "dispatch a background handoff run".
+_HOST_EXCLUDED_SKILLS = {
+    "claude": {"handoff-opus"},
+    "codex": set(),
+}
+
+
 def _planned_links():
     """Return (kind, src, dest) tuples for link files only (no config)."""
     skills_dir = os.path.join(_pkg_root(), "skills")
+    links = []
+    for host in sorted(_HOST_SKILL_DIRS):
+        for skill_name in _bundled_skill_names(skills_dir):
+            if skill_name in _HOST_EXCLUDED_SKILLS[host]:
+                continue
+            links.append((
+                _HOST_LINK_KINDS[host],
+                os.path.join(skills_dir, skill_name, "SKILL.md"),
+                _home_path(*_HOST_SKILL_DIRS[host], skill_name, "SKILL.md"),
+            ))
+
+            # Codex may invoke handoff-codex only when the user explicitly
+            # mentions $handoff-codex. This metadata is intentionally not
+            # installed for any other handoff skill or host.
+            if host == "codex" and skill_name == "handoff-codex":
+                metadata_parts = ("agents", "openai.yaml")
+                links.append((
+                    "hard link",
+                    os.path.join(skills_dir, skill_name, *metadata_parts),
+                    _home_path(
+                        *_HOST_SKILL_DIRS[host], skill_name, *metadata_parts
+                    ),
+                ))
+    return links
+
+
+def _excluded_skill_links():
+    """Previously-installed links for skills a host must no longer see.
+
+    Only links to our bundled SKILL.md files are reported — a real file the
+    user put there is left alone. Both symlinks and hard links are recognized.
+    """
+    skills_dir = os.path.join(_pkg_root(), "skills")
+    stale = []
+    for host, excluded in sorted(_HOST_EXCLUDED_SKILLS.items()):
+        for skill_name in sorted(excluded):
+            src = os.path.join(skills_dir, skill_name, "SKILL.md")
+            dest = _home_path(*_HOST_SKILL_DIRS[host], skill_name, "SKILL.md")
+            is_our_symlink = (
+                os.path.islink(dest)
+                and os.path.realpath(dest).startswith(skills_dir + os.sep)
+            )
+            is_our_hardlink = (
+                not os.path.islink(dest)
+                and os.path.isfile(dest)
+                and os.path.samefile(src, dest)
+            )
+            if is_our_symlink or is_our_hardlink:
+                stale.append(dest)
+    return stale
+
+
+def _legacy_agent_files():
+    """Codex `.toml` subagents installed before the skills migration."""
+    agents_dir = _home_path(".codex", "agents")
+    if not os.path.isdir(agents_dir):
+        return []
     return [
-        ("hard link", os.path.join(skills_dir, "handoff-ds.toml"),
-         _home_path(".codex", "agents", "handoff-ds.toml")),
-        ("soft link", os.path.join(skills_dir, "handoff-ds", "SKILL.md"),
-         _home_path(".claude", "skills", "handoff-ds", "SKILL.md")),
-        ("soft link", os.path.join(skills_dir, "handoff-codex", "SKILL.md"),
-         _home_path(".claude", "skills", "handoff-codex", "SKILL.md")),
-        ("soft link", os.path.join(skills_dir, "handoff-opus", "SKILL.md"),
-         _home_path(".claude", "skills", "handoff-opus", "SKILL.md")),
+        os.path.join(agents_dir, name)
+        for name in sorted(os.listdir(agents_dir))
+        if name.startswith("handoff-") and name.endswith(".toml")
     ]
+
+
+def _legacy_agent_backup_path(path: str) -> str:
+    """Choose a backup name without overwriting an earlier migration."""
+    base = f"{path}.removed.bak"
+    candidate = base
+    suffix = 1
+    while os.path.lexists(candidate):
+        candidate = f"{base}.{suffix}"
+        suffix += 1
+    return candidate
 
 
 def _print_plan():
@@ -54,6 +150,19 @@ def _print_plan():
     print("The following will be created/updated:")
     for kind, src, dest in links:
         print(f"  {kind}: {_short(dest)} -> {_short(src)}")
+
+    stale_links = _excluded_skill_links()
+    if stale_links:
+        print("\nThe following superseded links will be removed:")
+        for path in stale_links:
+            print(f"  remove: {_short(path)}")
+
+    legacy_agents = _legacy_agent_files()
+    if legacy_agents:
+        print("\nThe following legacy Codex agents will be backed up:")
+        for path in legacy_agents:
+            backup = _legacy_agent_backup_path(path)
+            print(f"  move: {_short(path)} -> {_short(backup)}")
 
     config_path = user_config_path()
     if os.path.isfile(config_path):
@@ -74,31 +183,53 @@ def _confirm() -> bool:
 
 
 def _create_links():
-    """Create hard/soft links for agent and skill files from cli/skills/."""
-    skills_dir = os.path.join(_pkg_root(), "skills")
-    created = 0
+    """Install every planned skill link and migrate superseded integrations.
 
-    # Hard link for Codex agent
-    src_agent = os.path.join(skills_dir, "handoff-ds.toml")
-    dest_agent = _home_path(".codex", "agents", "handoff-ds.toml")
-    os.makedirs(os.path.dirname(dest_agent), exist_ok=True)
-    if os.path.exists(dest_agent):
-        os.remove(dest_agent)
-    os.link(src_agent, dest_agent)
-    created += 1
+    Consumes `_planned_links()` directly so what `handoff init` previews is
+    exactly what it writes.
+    """
+    links = _planned_links()
+    link_functions = {
+        "hard link": os.link,
+        "soft link": os.symlink,
+    }
+    for kind, src, dest in links:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if os.path.lexists(dest):
+            os.remove(dest)
+        link_functions[kind](src, dest)
 
-    # Soft links for Claude Code skills (3 backends)
-    for skill_name in ("handoff-ds", "handoff-codex", "handoff-opus"):
-        src_skill = os.path.join(skills_dir, skill_name, "SKILL.md")
-        dest_skill_dir = _home_path(".claude", "skills", skill_name)
-        dest_skill = os.path.join(dest_skill_dir, "SKILL.md")
-        os.makedirs(dest_skill_dir, exist_ok=True)
-        if os.path.lexists(dest_skill):
-            os.remove(dest_skill)
-        os.symlink(src_skill, dest_skill)
-        created += 1
+    removed = 0
+    for stale in _excluded_skill_links():
+        os.remove(stale)
+        removed += 1
+        # Drop the skill's directory too, once its SKILL.md is gone.
+        parent = os.path.dirname(stale)
+        if os.path.basename(stale) == "SKILL.md" and not os.listdir(parent):
+            os.rmdir(parent)
 
-    print(f"✓ Created {created} links (1 hard + 3 soft)")
+    moved_agents = []
+    for legacy in _legacy_agent_files():
+        backup = _legacy_agent_backup_path(legacy)
+        os.rename(legacy, backup)
+        moved_agents.append((legacy, backup))
+
+    print(f"✓ Created {len(links)} skill links")
+    if removed:
+        print(f"✓ Removed {removed} superseded links")
+    if moved_agents:
+        print(
+            _color(
+                "1;33",
+                "WARNING: Legacy Codex agent files were disabled and backed up:",
+            ),
+            file=sys.stderr,
+        )
+        for legacy, backup in moved_agents:
+            print(
+                f"  {_short(legacy)} -> {_short(backup)}",
+                file=sys.stderr,
+            )
 
 
 def run_init(assume_yes: bool = False):
