@@ -26,8 +26,8 @@ docs/configuration.zh-CN.md 的示例）。
 
 - [ ] 把 opencode 配置从 `config.yaml.bak` 合回 `config.yaml`（或填 DEEPSEEK_API_KEY 走官方 API）
 - [ ] 实战验证三个 skill：在 Claude Code 真实派发 `/handoff-ds`、`/handoff-codex`、`/handoff-opus` 各一次
-- [ ] Codex 侧验证 `handoff-ds` subagent（`~/.codex/agents/handoff-ds.toml`，prompt-file 机制未实战跑过）
-- [ ] 验证交互式 codex 续接（`handoff resume <codex-seq>` 无 prompt → `codex resume <id>`，从未人工测过）
+- [ ] Codex 侧验证 `handoff-ds` skill（`~/.codex/skills/handoff-ds/SKILL.md`，prompt-file 机制未实战跑过）
+- [ ] 验证交互式 codex 重开（`handoff open <codex-seq>` → `codex resume <id>`，从未人工测过）
 - [ ] 退役死装置：`~/.claude/skills/ds-cli/`（其依赖的 `~/.ds-cli` 已不存在，skill 已不可用）、
   `~/bin/ds-cli`、旧 checkout `~/dev/github/ds-cli`（merge 后即冗余）；
   `acpx` / `headless` 两个 skill 与 handoff 功能重叠，考虑收敛
