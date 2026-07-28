@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import time
 from typing import Any
 
@@ -104,6 +105,7 @@ def update_runtime_info(
     usage: dict[str, Any] | None = None,
     model: str | None = None,
     pro: bool | None = None,
+    process_start_token: str | None = None,
 ) -> None:
     row = conn.execute("SELECT runtime_info FROM runs WHERE uuid = ?", (uid,)).fetchone()
     info = parse_runtime_info(row["runtime_info"] if row else None)
@@ -112,6 +114,12 @@ def update_runtime_info(
             info["pid"] = int(pid)
         else:
             info.pop("pid", None)
+            info.pop("process_start_token", None)
+    if process_start_token is not None:
+        if process_start_token:
+            info["process_start_token"] = process_start_token
+        else:
+            info.pop("process_start_token", None)
     if usage is not None:
         info["usage"] = normalize_usage(usage)
     if model is not None:
@@ -258,17 +266,95 @@ def process_alive(pid: int) -> bool:
         return True
 
 
+def process_group_alive(pid: int) -> bool:
+    """Return whether the process group whose ID is *pid* still exists.
+
+    Signal 0 is a permission/existence probe and does not deliver a signal to
+    any member of the process group.  ``execute_run`` starts each run in a new
+    session, so its saved process PID is also the process-group ID.  Probing
+    that saved ID directly keeps detecting remaining children after the group
+    leader exits.
+    """
+    if pid <= 0:
+        return False
+    try:
+        killpg = getattr(os, "killpg", None)
+        if killpg is None:
+            return process_alive(pid)
+        killpg(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def process_start_token(pid: int) -> str:
+    """Return a stable OS-reported start marker for *pid*, when available."""
+    if pid <= 0:
+        return ""
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=1,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def reconcile_running_runs(conn, now: float | None = None) -> None:
+    """Turn unverifiable ``running`` rows into ``error`` atomically."""
+    observed_at = time.time() if now is None else float(now)
+    rows = conn.execute(
+        "SELECT uuid, runtime_info FROM runs WHERE status = 'running'"
+    ).fetchall()
+    changed = False
+
+    for row in rows:
+        raw_info = row["runtime_info"]
+        info = parse_runtime_info(raw_info)
+        pid = runtime_pid(raw_info)
+        alive = bool(pid) and process_group_alive(pid)
+        saved_start = info.get("process_start_token")
+        if alive and isinstance(saved_start, str) and saved_start:
+            current_start = process_start_token(pid)
+            if current_start and current_start != saved_start:
+                alive = False
+        if alive:
+            continue
+
+        info.pop("pid", None)
+        info.pop("process_start_token", None)
+        info.pop("missing_since", None)  # clean up the former grace-period format
+        info.pop("stale_at", None)
+        info.pop("stale_reason", None)
+        info["error_at"] = observed_at
+        info["error_reason"] = "process_missing"
+        conn.execute(
+            "UPDATE runs SET status = 'error', runtime_info = ? "
+            "WHERE uuid = ? AND status = 'running'",
+            (dump_runtime_info(info), row["uuid"]),
+        )
+        changed = True
+
+    if changed:
+        conn.commit()
+
+
 def kill_process_group(pid: int, *, grace_seconds: float = 3.0) -> None:
     if pid <= 0:
         raise ProcessLookupError(pid)
-    try:
-        pgid = os.getpgid(pid)
-    except ProcessLookupError:
-        raise
+    # execute_run starts the subprocess with setsid, so the persisted PID is
+    # also its PGID. Use it directly even if the original group leader exited.
+    pgid = pid
     os.killpg(pgid, signal.SIGTERM)
     deadline = time.monotonic() + grace_seconds
     while time.monotonic() < deadline:
-        if not process_alive(pid):
+        if not process_group_alive(pgid):
             return
         time.sleep(0.1)
     try:

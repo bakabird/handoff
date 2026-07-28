@@ -28,11 +28,12 @@ from .runtime_info import (
 
 # Seconds between DB polls for auto-refresh.
 POLL_INTERVAL = 5.0
+INITIAL_STATUS_CHECK_DELAY = 3.0
 RUN_COLUMN_WIDTH = 34
 RUN_COLUMN_MIN_WIDTH = 19
 DATE_COLUMN_WIDTH = 11
 DATE_COLUMN_MIN_WIDTH = 5
-STATUS_COLUMN_WIDTH = 7
+STATUS_COLUMN_WIDTH = 8
 CWD_COLUMN_WIDTH = 10
 CWD_COLUMN_MIN_WIDTH = 6
 FULL_CWD_COLUMN_WIDTH = 28
@@ -310,6 +311,7 @@ class RunListScreen(Screen):
         # Start periodic DB polling for auto-refresh
         if self._refresh_fn is not None:
             self._fingerprint = self._compute_fingerprint(self._rows)
+            self.set_timer(INITIAL_STATUS_CHECK_DELAY, self._refresh_now)
             self.set_interval(POLL_INTERVAL, self._poll_refresh)
 
         if self._open_detail_on_mount:
@@ -589,6 +591,9 @@ class RunListScreen(Screen):
 
     def _info_for_row(self, row) -> str:
         parts = []
+        info = parse_runtime_info(row_value(row, "runtime_info", ""))
+        if row["status"] == "error" and info.get("error_reason") == "process_missing":
+            parts.append("proc-lost")
         context_size = self._context_size_for_row(row)
         if context_size:
             parts.append(context_size)

@@ -26,7 +26,14 @@ import subprocess
 import signal
 import datetime
 from .jsonl_parser import extract_result, format_event_for_stream, parse_jsonl_line
-from .runtime_info import merge_usage, scan_jsonl_usage, update_runtime_info, usage_from_json_line, usage_is_empty
+from .runtime_info import (
+    merge_usage,
+    process_start_token,
+    scan_jsonl_usage,
+    update_runtime_info,
+    usage_from_json_line,
+    usage_is_empty,
+)
 
 
 def _now_ts() -> str:
@@ -241,7 +248,12 @@ def execute_run(
         stderr=subprocess.STDOUT,
         preexec_fn=preexec_fn,
     )
-    update_runtime_info(conn, uid, pid=proc.pid)
+    update_runtime_info(
+        conn,
+        uid,
+        pid=proc.pid,
+        process_start_token=process_start_token(proc.pid),
+    )
     conn.commit()
 
     try:

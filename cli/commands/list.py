@@ -4,6 +4,7 @@ import sys
 
 from ..core import find_run, format_run_row, get_db
 from ..config import Config
+from ..runtime_info import reconcile_running_runs
 
 
 RUN_SELECT = """
@@ -109,6 +110,12 @@ def cmd_list(argv: list[str], config: Config):
 
         def _refresh_rows():
             """Re-query the DB for the latest 50 runs. Called by the TUI timer."""
+            # The TUI schedules its first call three seconds after mount, then
+            # calls this through its normal polling interval.
+            try:
+                reconcile_running_runs(conn)
+            except Exception:
+                pass
             return _ensure_row(_recent_rows(), initial_run_id or None)
 
         if follow and not initial_run_id:

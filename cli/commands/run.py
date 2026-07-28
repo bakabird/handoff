@@ -246,23 +246,25 @@ def _execute(
 
     ensure_backend_token_ready(backend_name, backend_cfg, config.user_config_path)
 
+    # Resolve all fail-fast backend data before allocating a DB row. Otherwise a
+    # configuration error can leave a run permanently recorded as "running"
+    # even though no subprocess was ever started.
+    model = resolve_backend_model(backend_cfg, pro)
+    if not model:
+        print(
+            f"handoff: backend '{backend_name}' resolves no model. "
+            f"Set backends.{backend_name}.model in {config.user_config_path} "
+            f"(pre-0.3 configs carried this in the now-removed top-level default_model).",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    backend_cfg["_resolved_model"] = model
+    backend_cfg["_system_prompt"] = config.backend_system_prompt(backend_name)
+    model_reasoning_effort = resolve_backend_reasoning_effort(backend_cfg, pro)
+    backend_cfg["_resolved_model_reasoning_effort"] = model_reasoning_effort
+    btype = backend_type(backend_cfg)
+
     if dry_run:
-        model = resolve_backend_model(backend_cfg, pro)
-        if not model:
-            print(
-                f"handoff: backend '{backend_name}' resolves no model. "
-                f"Set backends.{backend_name}.model in {config.user_config_path} "
-                f"(pre-0.3 configs carried this in the now-removed top-level default_model).",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-
-        backend_cfg["_resolved_model"] = model
-        backend_cfg["_system_prompt"] = config.backend_system_prompt(backend_name)
-        model_reasoning_effort = resolve_backend_reasoning_effort(backend_cfg, pro)
-        backend_cfg["_resolved_model_reasoning_effort"] = model_reasoning_effort
-
-        btype = backend_type(backend_cfg)
         session_id = (
             resume_session_id
             if resume_session_id
@@ -328,24 +330,9 @@ def _execute(
         with open(prompt_path, "w", encoding="utf-8") as pf:
             pf.write(prompt_text)
 
-    # Resolve model
-    model = resolve_backend_model(backend_cfg, pro)
-    if not model:
-        print(
-            f"handoff: backend '{backend_name}' resolves no model. "
-            f"Set backends.{backend_name}.model in {config.user_config_path} "
-            f"(pre-0.3 configs carried this in the now-removed top-level default_model).",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    backend_cfg["_resolved_model"] = model
-    backend_cfg["_system_prompt"] = config.backend_system_prompt(backend_name)
-    model_reasoning_effort = resolve_backend_reasoning_effort(backend_cfg, pro)
-    backend_cfg["_resolved_model_reasoning_effort"] = model_reasoning_effort
     update_runtime_info(conn, uid, model=model, pro=pro)
     conn.commit()
 
-    btype = backend_type(backend_cfg)
     set_backend_env(backend_cfg, model, backend_cfg.get("pro_model", ""))
     if resume_session_id:
         session_id = resume_session_id
