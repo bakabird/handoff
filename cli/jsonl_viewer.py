@@ -15,6 +15,7 @@ from markdown_it import MarkdownIt
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.screen import Screen
 from textual.widgets import (
     Footer,
@@ -51,6 +52,41 @@ def _markdown_parser_factory() -> MarkdownIt:
     # and autolinks e.g. <https://...>
     md.disable(["link", "image", "autolink"])
     return md
+
+
+class _DocumentMarkdown(Markdown):
+    """Markdown whose vertical scrolling is owned by its outer document pane.
+
+    Textual caps fenced code blocks at 20 rows and gives them ``overflow: auto``.
+    That creates a nested vertical scroll area inside our ``VerticalScroll``.
+    Trackpad momentum can then alternate between the fence and the document at
+    their boundaries, which appears as rapid up/down jitter.
+
+    Expand fences to their rendered height and disable only their vertical
+    overflow. Horizontal code scrolling remains available.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.styles.overflow_y = "hidden"
+
+    def update(self, markdown: str) -> AwaitComplete:
+        update_complete = super().update(markdown)
+
+        async def flatten_vertical_scroll() -> None:
+            await update_complete
+            self.call_after_refresh(self._flatten_vertical_scroll)
+
+        return AwaitComplete(flatten_vertical_scroll())
+
+    def _flatten_vertical_scroll(self) -> None:
+        for fence in self.query("MarkdownFence"):
+            # One extra row leaves room for the horizontal scrollbar when a
+            # code line is wider than the viewport. MarkdownFence renders one
+            # row of vertical padding above and below the source.
+            code = getattr(fence, "code", "")
+            fence.styles.max_height = len(code.splitlines()) + 3
+            fence.styles.overflow_y = "hidden"
 
 
 class JsonlViewerScreen(Screen):
@@ -139,8 +175,8 @@ class JsonlViewerScreen(Screen):
             with TabPane("3 Prompt", id="prompt"):
                 with VerticalScroll(id="prompt_scroll"):
                     yield Static("", id="prompt_header")
-                    yield Markdown(
-                        "",
+                    yield _DocumentMarkdown(
+                        None,
                         id="prompt_md",
                         parser_factory=_markdown_parser_factory,
                         open_links=False,
@@ -148,8 +184,8 @@ class JsonlViewerScreen(Screen):
             with TabPane("4 Result", id="result"):
                 with VerticalScroll(id="result_scroll"):
                     yield Static("", id="result_header")
-                    yield Markdown(
-                        "",
+                    yield _DocumentMarkdown(
+                        None,
                         id="result_md",
                         parser_factory=_markdown_parser_factory,
                         open_links=False,

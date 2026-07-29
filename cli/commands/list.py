@@ -129,7 +129,10 @@ def cmd_list(argv: list[str], config: Config):
             initial_run_id=initial_run_id or None,
             open_detail_on_mount=follow,
         )
-        app.run(mouse=False)
+        # Detail Markdown panes rely on Textual's native mouse events for
+        # wheel / touchpad scrolling.  With mouse support disabled, some
+        # terminals only provide an unreliable arrow-key compatibility path.
+        app.run(mouse=True)
         conn.close()
 
         if app.action_result and app.action_result.startswith("resume:"):

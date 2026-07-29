@@ -1,5 +1,10 @@
 # 更新日志
 
+## [v4.0.1] - 2026-07-29
+
+- 修复 `handoff list` 详情页 Prompt/Result 标签无法稳定使用鼠标或触控板滚动的问题。
+- 消除 Markdown 代码块与文档外层之间的嵌套纵向滚动，避免触控板惯性滚动到顶部时上下抖动。
+
 ## [v4.0.0] - 2026-07-28
 
 - `handoff open` 和 `handoff resume` 支持通过 `--backend`、`--session-id`
@@ -24,4 +29,5 @@
   剩余子进程。
 - 新增 CLI 架构文档，说明模块职责、依赖关系、运行数据流与持久化结构。
 
+[v4.0.1]: https://github.com/dazuiba/handoff/compare/v4.0.0...v4.0.1
 [v4.0.0]: https://github.com/dazuiba/handoff/compare/v0.3.9...v4.0.0
